@@ -85,7 +85,7 @@ export default function App() {
     const days = daysInMonth(year, month);
     const startDay = firstDayOfMonth(year, month);
     
-    const arr = [];
+    const arr: (number | null)[] = []; // Corrigido tipagem para evitar erro 'never'
     for (let i = 0; i < startDay; i++) arr.push(null);
     for (let i = 1; i <= days; i++) arr.push(i);
     return arr;
@@ -226,8 +226,26 @@ export default function App() {
                   </h3>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setCurrentDate(new Date(currentDate.setYear(currentDate.getFullYear()), currentDate.setMonth(currentDate.getMonth() - 1)))} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronLeft size={20}/></button>
-                  <button onClick={() => setCurrentDate(new Date(currentDate.setYear(currentDate.getFullYear()), currentDate.setMonth(currentDate.getMonth() + 1)))} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronRight size={20}/></button>
+                  <button 
+                    onClick={() => {
+                      const d = new Date(currentDate);
+                      d.setMonth(d.getMonth() - 1);
+                      setCurrentDate(d);
+                    }} 
+                    className="p-2 hover:bg-zinc-800 rounded-lg"
+                  >
+                    <ChevronLeft size={20}/>
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const d = new Date(currentDate);
+                      d.setMonth(d.getMonth() + 1);
+                      setCurrentDate(d);
+                    }} 
+                    className="p-2 hover:bg-zinc-800 rounded-lg"
+                  >
+                    <ChevronRight size={20}/>
+                  </button>
                 </div>
               </div>
               <div className="grid grid-cols-7 gap-2">
@@ -357,7 +375,6 @@ const DataRow = ({ title, sub, val, isPositive, onEdit, onDelete, hideEdit }: an
     </td>
     <td className={`p-5 text-right font-black italic text-xs md:text-sm ${isPositive ? 'text-teal-400' : 'text-zinc-400'}`}>{val}</td>
     <td className="p-5 text-center space-x-4">
-      {/* AQUI ESTÁ A MUDANÇA: O BOTAO DE EDITAR ESTÁ AGORA PARA TODOS OS TIPOS */}
       <button onClick={onEdit} className="text-indigo-500 hover:text-white transition-colors"><Edit2 size={18}/></button>
       <button onClick={onDelete} className="text-red-900 hover:text-red-500 transition-colors"><Trash2 size={18}/></button>
     </td>
@@ -369,7 +386,7 @@ const LoginPage = ({ onLogin }: any) => {
   const [p, setP] = useState('');
   return (
     <div className="min-h-screen flex items-center justify-center bg-black p-4">
-      <div className="w-full max-w-sm bg-zinc-900 p-8 md:p-12 rounded-[50px] border border-zinc-800 shadow-2xl">
+      <div className="w-full max-sm bg-zinc-900 p-8 md:p-12 rounded-[50px] border border-zinc-800 shadow-2xl">
         <h2 className="text-3xl md:text-4xl font-black text-center text-indigo-500 italic mb-10 tracking-tighter uppercase">Musicianos</h2>
         <div className="space-y-4 text-center">
           <input placeholder="USUÁRIO" className="w-full p-5 bg-zinc-800 rounded-3xl border border-zinc-700 focus:border-indigo-500 outline-none font-bold text-center text-white" onChange={e => setU(e.target.value)} />
