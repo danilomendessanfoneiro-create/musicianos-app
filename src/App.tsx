@@ -65,7 +65,7 @@ export default function App() {
   // --- Lógica de Negócio ---
   const salvarRegistro = async (type: string, data: any) => {
     const id = modalOpen.data?.id;
-    const isReceived = data.received === 'on' || data.received === true;
+    const isReceived = data.received === true;
     const table = type === 'crm' ? 'leads' : type;
 
     const payload: any = { ...data, user_id: currentUserId };
@@ -74,7 +74,7 @@ export default function App() {
     if (data.amount) payload.amount = Number(data.amount);
     if (type === 'gigs') payload.received = isReceived;
 
-    const { data: saved, error } = await supabase.from(table).upsert(id ? { ...payload, id } : payload).select();
+    const { error } = await supabase.from(table).upsert(id ? { ...payload, id } : payload).select();
 
     if (error) return alert(error.message);
 
@@ -128,25 +128,21 @@ export default function App() {
 
   // --- Calendário ---
   const calendarDays = useMemo(() => {
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-  const firstDay = new Date(year, month, 1).getDay();
-  const lastDate = new Date(year, month + 1, 0).getDate();
-  
-  // AQUI: Tipando explicitamente para o TS não reclamar do null
-  const days: (number | null)[] = []; 
-  
-  for (let i = 0; i < firstDay; i++) days.push(null);
-  for (let i = 1; i <= lastDate; i++) days.push(i);
-  return days;
-}, [currentDate]);
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstDay = new Date(year, month, 1).getDay();
+    const lastDate = new Date(year, month + 1, 0).getDate();
+    const days: (number | null)[] = []; 
+    for (let i = 0; i < firstDay; i++) days.push(null);
+    for (let i = 1; i <= lastDate; i++) days.push(i);
+    return days;
+  }, [currentDate]);
 
   if (loading) return <div className="h-screen bg-black flex items-center justify-center text-indigo-500 font-black italic animate-pulse">CARREGANDO MUSICIANOS...</div>;
   if (!user) return <LoginPage />;
 
   return (
     <div className="min-h-screen bg-black text-white flex font-sans">
-      {/* Sidebar - Mobile Toggle */}
       <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden fixed top-4 left-4 z-50 p-3 bg-zinc-900 rounded-xl text-indigo-400 border border-zinc-800">
         {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
       </button>
@@ -189,7 +185,7 @@ export default function App() {
                     {Object.entries(biData.leadsStatus).map(([status, count]: any) => (
                       <div key={status} className="flex-1 flex flex-col items-center">
                         <div className="w-full bg-indigo-500/20 rounded-t-lg relative flex items-end h-16">
-                          <div className="w-full bg-indigo-500 rounded-t-lg transition-all" style={{ height: `${count > 0 ? (count / leads.length) * 100 : 5}%` }}></div>
+                          <div className="w-full bg-indigo-500 rounded-t-lg transition-all" style={{ height: `${count > 0 ? (count / (leads.length || 1)) * 100 : 5}%` }}></div>
                         </div>
                         <span className="text-[8px] font-black uppercase mt-2 text-zinc-600">{status}</span>
                       </div>
@@ -209,7 +205,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Calendário */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 shadow-2xl">
               <div className="flex justify-between items-center mb-6">
                 <h3 className="font-black italic uppercase text-indigo-400">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h3>
@@ -233,7 +228,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Tabela de Gigs */}
             <div className="bg-zinc-900/50 border border-zinc-800 rounded-[32px] overflow-hidden">
               <table className="w-full text-left">
                 <thead className="bg-zinc-800/50 text-[10px] font-black uppercase text-zinc-500">
@@ -278,7 +272,6 @@ export default function App() {
                 </button>
               </div>
             </div>
-
             <div className="bg-zinc-900/50 border border-zinc-800 rounded-[32px] overflow-hidden">
               <table className="w-full text-left">
                 <tbody className="divide-y divide-zinc-800">
@@ -302,7 +295,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Views de CRM simplificada no código completo */}
         {currentView === 'crm' && (
            <div className="space-y-6">
               <div className="flex justify-between items-center">
@@ -331,7 +323,6 @@ export default function App() {
         )}
       </main>
 
-      {/* MODAL SYSTEM - TOTALMENTE INTEGRADO */}
       {modalOpen.type && (
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50 backdrop-blur-xl">
           <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-[40px] w-full max-w-md shadow-2xl relative overflow-y-auto max-h-[90vh]">
@@ -354,18 +345,14 @@ export default function App() {
                 </form>
               </div>
             ) : (
-              <form // Dentro do onSubmit do formulário de Gigs/Finance:
-onSubmit={async (e: any) => { 
-  e.preventDefault(); 
-  const fd = new FormData(e.currentTarget);
-  const data: any = Object.fromEntries(fd);
-  
-  // Ajuste para o TypeScript não reclamar da atribuição
-  const receivedCheckbox = fd.get('received');
-  data.received = receivedCheckbox === 'on'; 
-  
-  await salvarRegistro(modalOpen.type!, data); 
-}} className="space-y-4">
+              <form onSubmit={async (e: any) => { 
+                e.preventDefault(); 
+                const fd = new FormData(e.currentTarget);
+                const data: any = {};
+                fd.forEach((value, key) => { data[key] = value; });
+                if (modalOpen.type === 'gigs') data.received = fd.get('received') === 'on'; 
+                await salvarRegistro(modalOpen.type!, data); 
+              }} className="space-y-4">
                 
                 {modalOpen.type === 'gigs' && (
                   <>
@@ -416,7 +403,6 @@ onSubmit={async (e: any) => {
   );
 }
 
-// --- Componentes Auxiliares ---
 const MenuBtn = ({ active, onClick, icon, label }: any) => (
   <button onClick={onClick} className={`flex items-center w-full p-4 rounded-2xl transition-all ${active ? 'bg-indigo-600 text-white shadow-xl italic font-black scale-105' : 'text-zinc-500 hover:bg-zinc-800 hover:text-white font-bold'}`}>
     {icon} <span className="ml-4 text-[10px] uppercase tracking-widest">{label}</span>
