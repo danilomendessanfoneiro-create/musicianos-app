@@ -128,15 +128,18 @@ export default function App() {
 
   // --- Calendário ---
   const calendarDays = useMemo(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const firstDay = new Date(year, month, 1).getDay();
-    const lastDate = new Date(year, month + 1, 0).getDate();
-    const days = [];
-    for (let i = 0; i < firstDay; i++) days.push(null);
-    for (let i = 1; i <= lastDate; i++) days.push(i);
-    return days;
-  }, [currentDate]);
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const lastDate = new Date(year, month + 1, 0).getDate();
+  
+  // AQUI: Tipando explicitamente para o TS não reclamar do null
+  const days: (number | null)[] = []; 
+  
+  for (let i = 0; i < firstDay; i++) days.push(null);
+  for (let i = 1; i <= lastDate; i++) days.push(i);
+  return days;
+}, [currentDate]);
 
   if (loading) return <div className="h-screen bg-black flex items-center justify-center text-indigo-500 font-black italic animate-pulse">CARREGANDO MUSICIANOS...</div>;
   if (!user) return <LoginPage />;
@@ -351,13 +354,18 @@ export default function App() {
                 </form>
               </div>
             ) : (
-              <form onSubmit={async (e: any) => { 
-                e.preventDefault(); 
-                const fd = new FormData(e.currentTarget);
-                const data = Object.fromEntries(fd);
-                data.received = fd.get('received') === 'on';
-                await salvarRegistro(modalOpen.type!, data); 
-              }} className="space-y-4">
+              <form // Dentro do onSubmit do formulário de Gigs/Finance:
+onSubmit={async (e: any) => { 
+  e.preventDefault(); 
+  const fd = new FormData(e.currentTarget);
+  const data: any = Object.fromEntries(fd);
+  
+  // Ajuste para o TypeScript não reclamar da atribuição
+  const receivedCheckbox = fd.get('received');
+  data.received = receivedCheckbox === 'on'; 
+  
+  await salvarRegistro(modalOpen.type!, data); 
+}} className="space-y-4">
                 
                 {modalOpen.type === 'gigs' && (
                   <>
