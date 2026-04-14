@@ -24,8 +24,6 @@ export default function App() {
   const [finance, setFinance] = useState<Transaction[]>([]);
   const [modalOpen, setModalOpen] = useState<{ type: string | null, data: any | null }>({ type: null, data: null });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
-  // ESTADOS PARA O CALENDÁRIO DINÂMICO
   const [currentDate, setCurrentDate] = useState(new Date());
 
   const currentUserId = user?.id || '';
@@ -75,7 +73,6 @@ export default function App() {
     };
   }, [fFinance]);
 
-  // LÓGICA DO CALENDÁRIO DINÂMICO
   const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
   const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
   
@@ -84,8 +81,7 @@ export default function App() {
     const month = currentDate.getMonth();
     const days = daysInMonth(year, month);
     const startDay = firstDayOfMonth(year, month);
-    
-    const arr: (number | null)[] = []; // Corrigido tipagem para evitar erro 'never'
+    const arr: (number | null)[] = [];
     for (let i = 0; i < startDay; i++) arr.push(null);
     for (let i = 1; i <= days; i++) arr.push(i);
     return arr;
@@ -93,43 +89,79 @@ export default function App() {
 
   const salvarRegistro = async (type: string, data: any) => {
     const id = modalOpen.data?.id || undefined;
-    const novoItem = { ...data, user_id: currentUserId, amount: Number(data.amount || 0), fee: Number(data.fee || 0), value: Number(data.value || 0) };
+    const isReceived = data.received === 'on' || data.received === true;
+
+    // Objeto limpo para o banco
+    const payload: any = {
+      user_id: currentUserId,
+      date: data.date,
+    };
 
     if (type === 'crm') {
-      const { data: saved } = await supabase.from('leads').upsert({ ...novoItem, id }).select();
-      if (saved) setLeads(prev => id ? prev.map(l => l.id === id ? saved[0] : l) : [...prev, saved[0]]);
+      payload.name = data.name;
+      payload.venue = data.venue;
+      payload.status = data.status;
+      payload.value = Number(data.value || 0);
+    } else if (type === 'gigs') {
+      payload.venue = data.venue;
+      payload.fee = Number(data.fee || 0);
+      payload.received = isReceived;
+    } else if (type === 'finance') {
+      payload.description = data.description;
+      payload.amount = Number(data.amount || 0);
+      payload.type = data.type;
+      payload.category = data.category;
+    } else if (type === 'userManagement') {
+      const userId = modalOpen.data?.id || `u-${Date.now()}`;
+      const userData = { ...data, id: userId, categories: modalOpen.data?.categories || ['Geral'], status: data.status || 'ativo' };
+      setAllUsers(prev => modalOpen.data ? prev.map(u => u.id === userId ? userData : u) : [...prev, userData]);
+      setModalOpen({ type: null, data: null });
+      return;
     }
-    if (type === 'gigs') {
-      const { data: savedGig } = await supabase.from('gigs').upsert({ ...novoItem, id }).select();
-      if (savedGig) {
-        setGigs(prev => id ? prev.map(g => g.id === id ? savedGig[0] : g) : [...prev, savedGig[0]]);
-        if (data.received && !id) {
-          const trans = { date: data.date, description: `Cachê: ${data.venue}`, amount: Number(data.fee), type: 'entrada', user_id: currentUserId, category: 'Show' };
-          const { data: savedFin } = await supabase.from('finance').insert([trans]).select();
-          if (savedFin) setFinance(prev => [...prev, savedFin[0]]);
-        }
+
+    try {
+      const table = type === 'crm' ? 'leads' : type;
+      const { data: saved, error } = await supabase
+        .from(table)
+        .upsert(id ? { ...payload, id } : payload)
+        .select();
+
+      if (error) {
+        alert(`Erro ao salvar: ${error.message}`);
+        return;
       }
+
+      if (saved) {
+        if (type === 'crm') setLeads(prev => id ? prev.map(l => l.id === id ? saved[0] : l) : [...prev, saved[0]]);
+        if (type === 'gigs') {
+          setGigs(prev => id ? prev.map(g => g.id === id ? saved[0] : g) : [...prev, saved[0]]);
+          
+          // LÓGICA DO CACHÊ RECEBIDO (Sincroniza com Financeiro)
+          if (isReceived && !id) {
+            const trans = { 
+              date: data.date, 
+              description: `Cachê: ${data.venue}`, 
+              amount: Number(data.fee), 
+              type: 'entrada', 
+              user_id: currentUserId, 
+              category: 'Show' 
+            };
+            const { data: savedFin } = await supabase.from('finance').insert([trans]).select();
+            if (savedFin) setFinance(prev => [...prev, savedFin[0]]);
+          }
+        }
+        if (type === 'finance') setFinance(prev => id ? prev.map(t => t.id === id ? saved[0] : t) : [...prev, saved[0]]);
+      }
+      setModalOpen({ type: null, data: null });
+    } catch (err) {
+      alert("Falha na conexão com o banco.");
     }
-    if (type === 'finance') {
-      const { data: saved } = await supabase.from('finance').upsert({ ...novoItem, id }).select();
-      if (saved) setFinance(prev => id ? prev.map(t => t.id === id ? saved[0] : t) : [...prev, saved[0]]);
-    }
-    if (type === 'userManagement') {
-        const userId = modalOpen.data?.id || `u-${Date.now()}`;
-        const userData = { ...data, id: userId, categories: modalOpen.data?.categories || ['Geral'], status: data.status || 'ativo' };
-        setAllUsers(prev => modalOpen.data ? prev.map(u => u.id === userId ? userData : u) : [...prev, userData]);
-    }
-    if (type === 'categories') {
-      const lista = data.categories.split(',').map((s: string) => s.trim()).filter((s: string) => s !== '');
-      setAllUsers(prev => prev.map(u => u.id === currentUserId ? { ...u, categories: lista } : u));
-    }
-    setModalOpen({ type: null, data: null });
   };
 
   if (!user) return <LoginPage onLogin={(u: any, p: any) => {
     const achado = allUsers.find(x => x.loginName === u && x.password === p);
     if (achado) {
-        if (achado.status === 'bloqueado') { alert("Acesso Bloqueado. Entre em contato com o suporte."); return false; }
+        if (achado.status === 'bloqueado') { alert("Acesso Bloqueado. Entre em contato."); return false; }
         setUser(achado); 
         return true; 
     }
@@ -138,7 +170,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-black text-white flex font-sans selection:bg-indigo-500/30">
-      
       <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden fixed top-4 left-4 z-50 p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-indigo-400 shadow-2xl">
         {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
       </button>
@@ -171,7 +202,6 @@ export default function App() {
                 <p className={`text-2xl md:text-3xl font-black ${biData.saldoGeral >= 0 ? 'text-teal-400' : 'text-red-500'}`}>R$ {biData.saldoGeral.toLocaleString('pt-BR')}</p>
               </div>
             </header>
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <InteractiveCard title="Entradas Totais" value={biData.entradasTotal} icon={<ArrowUpCircle className="text-teal-400" size={24}/>} color="border-teal-500" onClick={() => setModalOpen({type: 'detail_in', data: null})} />
               <InteractiveCard title="Saídas Totais" value={biData.saidasTotal} icon={<ArrowDownCircle className="text-red-400" size={24}/>} color="border-red-500" onClick={() => setModalOpen({type: 'detail_out', data: null})} />
@@ -216,36 +246,15 @@ export default function App() {
                 </table>
               </div>
             </div>
-
             <div className="bg-zinc-900 p-8 rounded-[40px] border border-zinc-800 shadow-2xl h-fit">
               <div className="flex justify-between items-center mb-6">
                 <div className="flex items-center text-indigo-400">
                   <CalendarIcon className="mr-3" size={24} />
-                  <h3 className="text-xl font-black italic uppercase">
-                    {currentDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}
-                  </h3>
+                  <h3 className="text-xl font-black italic uppercase">{currentDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}</h3>
                 </div>
                 <div className="flex gap-2">
-                  <button 
-                    onClick={() => {
-                      const d = new Date(currentDate);
-                      d.setMonth(d.getMonth() - 1);
-                      setCurrentDate(d);
-                    }} 
-                    className="p-2 hover:bg-zinc-800 rounded-lg"
-                  >
-                    <ChevronLeft size={20}/>
-                  </button>
-                  <button 
-                    onClick={() => {
-                      const d = new Date(currentDate);
-                      d.setMonth(d.getMonth() + 1);
-                      setCurrentDate(d);
-                    }} 
-                    className="p-2 hover:bg-zinc-800 rounded-lg"
-                  >
-                    <ChevronRight size={20}/>
-                  </button>
+                  <button onClick={() => { const d = new Date(currentDate); d.setMonth(d.getMonth() - 1); setCurrentDate(d); }} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronLeft size={20}/></button>
+                  <button onClick={() => { const d = new Date(currentDate); d.setMonth(d.getMonth() + 1); setCurrentDate(d); }} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronRight size={20}/></button>
                 </div>
               </div>
               <div className="grid grid-cols-7 gap-2">
@@ -255,9 +264,7 @@ export default function App() {
                   const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                   const temShow = fGigs.some(g => g.date === dateStr);
                   return (
-                    <div key={i} className={`h-8 md:h-10 flex items-center justify-center rounded-xl text-xs font-bold transition-all ${temShow ? 'bg-indigo-600 text-white shadow-lg scale-110' : 'bg-zinc-800 text-zinc-500'}`}>
-                      {day}
-                    </div>
+                    <div key={i} className={`h-8 md:h-10 flex items-center justify-center rounded-xl text-xs font-bold transition-all ${temShow ? 'bg-indigo-600 text-white shadow-lg scale-110' : 'bg-zinc-800 text-zinc-500'}`}>{day}</div>
                   );
                 })}
               </div>
@@ -269,11 +276,7 @@ export default function App() {
           <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-300 mt-10 md:mt-0">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-indigo-500/30 pb-4 gap-4">
               <h2 className="text-3xl font-black uppercase italic">{currentView === 'crm' ? 'CRM' : currentView === 'finance' ? 'Financeiro' : 'Painel Admin'}</h2>
-              <div className="flex gap-2 w-full md:w-auto">
-                <button onClick={() => setModalOpen({ type: currentView, data: null })} className="bg-indigo-600 flex-1 md:flex-none px-6 py-3 rounded-2xl flex items-center justify-center hover:bg-indigo-700 transition-all font-bold">
-                  <PlusCircle size={20} className="mr-2"/> Novo
-                </button>
-              </div>
+              <button onClick={() => setModalOpen({ type: currentView, data: null })} className="bg-indigo-600 w-full md:w-auto px-6 py-3 rounded-2xl flex items-center justify-center hover:bg-indigo-700 transition-all font-bold"><PlusCircle size={20} className="mr-2"/> Novo</button>
             </div>
             <div className="bg-zinc-900/50 rounded-3xl border border-zinc-800 overflow-x-auto shadow-2xl">
               <table className="w-full text-left text-sm min-w-[450px]">
@@ -294,22 +297,18 @@ export default function App() {
         )}
       </main>
 
-      {/* MODAL UNIFICADO */}
       {modalOpen.type && (
         <div className="fixed inset-0 bg-black/95 flex items-center justify-center p-4 z-50 backdrop-blur-md">
           <div className={`bg-zinc-900 border border-zinc-800 p-6 md:p-8 rounded-[40px] w-full shadow-2xl relative overflow-y-auto max-h-[90vh] ${modalOpen.type.startsWith('detail_') ? 'max-w-2xl' : 'max-w-md'}`}>
             <button onClick={() => setModalOpen({type: null, data: null})} className="absolute top-6 right-6 text-zinc-500 hover:text-white"><X size={24}/></button>
-            <h3 className="text-xl md:text-2xl font-black mb-8 text-indigo-400 uppercase italic">
-               {modalOpen.data ? 'Editar' : 'Novo'} {modalOpen.type}
-            </h3>
-
+            <h3 className="text-xl md:text-2xl font-black mb-8 text-indigo-400 uppercase italic">{modalOpen.data ? 'Editar' : 'Novo'} {modalOpen.type}</h3>
             <form onSubmit={async (e) => { e.preventDefault(); await salvarRegistro(modalOpen.type!, Object.fromEntries(new FormData(e.currentTarget))); }} className="space-y-4">
                 {modalOpen.type === 'crm' && (
                   <>
                     <input name="name" defaultValue={modalOpen.data?.name} placeholder="Nome do Lead" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
                     <input name="venue" defaultValue={modalOpen.data?.venue} placeholder="Local Provável" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" />
-                    <input name="date" type="date" defaultValue={modalOpen.data?.date || '2026-04-13'} className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <select name="status" defaultValue={modalOpen.data?.status || 'novo'} className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white">
+                    <input name="date" type="date" defaultValue={modalOpen.data?.date || new Date().toISOString().split('T')[0]} className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
+                    <select name="status" defaultValue={modalOpen.data?.status || 'novo'} className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white outline-none">
                       {Object.values(LeadStatus).map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
                     </select>
                   </>
@@ -317,23 +316,37 @@ export default function App() {
                 {modalOpen.type === 'gigs' && (
                   <>
                     <input name="venue" defaultValue={modalOpen.data?.venue} placeholder="Casa de Show" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <input name="date" type="date" defaultValue={modalOpen.data?.date || '2026-04-13'} className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
+                    <input name="date" type="date" defaultValue={modalOpen.data?.date || new Date().toISOString().split('T')[0]} className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
                     <input name="fee" type="number" defaultValue={modalOpen.data?.fee} placeholder="Cachê R$" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
+                    <label className="flex items-center space-x-3 p-4 bg-zinc-800 rounded-2xl cursor-pointer">
+                      <input name="received" type="checkbox" defaultChecked={modalOpen.data?.received} className="w-6 h-6 accent-indigo-600" />
+                      <span className="text-[10px] md:text-sm font-bold uppercase italic">Cachê Recebido? (Lança em Finanças)</span>
+                    </label>
+                  </>
+                )}
+                {modalOpen.type === 'finance' && (
+                  <>
+                    <input name="description" defaultValue={modalOpen.data?.description} placeholder="Descrição" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
+                    <input name="amount" type="number" defaultValue={modalOpen.data?.amount} placeholder="Valor R$" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
+                    <select name="category" className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white outline-none">
+                      {userCategories.map(cat => <option key={cat} value={cat}>{cat.toUpperCase()}</option>)}
+                    </select>
+                    <select name="type" defaultValue={modalOpen.data?.type || 'entrada'} className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white outline-none">
+                      <option value="entrada">ENTRADA (+)</option>
+                      <option value="saida">SAÍDA (-)</option>
+                    </select>
+                    <input name="date" type="date" defaultValue={modalOpen.data?.date || new Date().toISOString().split('T')[0]} className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
                   </>
                 )}
                 {modalOpen.type === 'userManagement' && (
                   <>
-                    <input name="name" defaultValue={modalOpen.data?.name} placeholder="Nome do Músico" className="w-full p-4 bg-zinc-800 rounded-2xl text-white" required />
-                    <input name="loginName" defaultValue={modalOpen.data?.loginName} placeholder="Usuário" className="w-full p-4 bg-zinc-800 rounded-2xl text-white" required />
-                    <input name="password" type="text" defaultValue={modalOpen.data?.password} placeholder="Senha" className="w-full p-4 bg-zinc-800 rounded-2xl text-white" required />
-                    <select name="status" defaultValue={modalOpen.data?.status || 'ativo'} className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white">
+                    <input name="name" defaultValue={modalOpen.data?.name} placeholder="Nome do Músico" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
+                    <input name="loginName" defaultValue={modalOpen.data?.loginName} placeholder="Usuário" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
+                    <input name="password" type="text" defaultValue={modalOpen.data?.password} placeholder="Senha" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
+                    <select name="status" defaultValue={modalOpen.data?.status || 'ativo'} className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white outline-none">
                         <option value="ativo">ATIVO ✅</option>
                         <option value="suspenso">SUSPENSO ⚠️</option>
                         <option value="bloqueado">BLOQUEADO 🚫</option>
-                    </select>
-                    <select name="role" defaultValue={modalOpen.data?.role || 'usuario'} className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white">
-                        <option value="usuario">MÚSICO</option>
-                        <option value="admin">ADMIN</option>
                     </select>
                   </>
                 )}
@@ -346,6 +359,7 @@ export default function App() {
   );
 }
 
+// Subcomponentes iguais...
 const MenuBtn = ({ active, onClick, icon, label }: any) => (
   <button onClick={onClick} className={`flex items-center w-full p-4 rounded-2xl transition-all ${active ? 'bg-indigo-600 text-white shadow-xl italic font-black' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white font-bold'}`}>
     {icon} <span className="ml-4 text-sm">{label}</span>
@@ -359,20 +373,9 @@ const InteractiveCard = ({ title, value, icon, color, onClick }: any) => (
   </button>
 );
 
-const MiniBar = ({ label, val, total, color }: any) => (
-  <div className="flex-1 flex flex-col justify-end">
-    <div className="flex justify-between items-end mb-1"><span className="text-[10px] font-black text-zinc-400">{val}</span></div>
-    <div className={`w-full ${color} rounded-t-md transition-all`} style={{ height: `${(val/(total||1))*100}%`, minHeight: '4px' }}></div>
-    <span className="text-[8px] text-zinc-600 font-black uppercase mt-2 text-center leading-tight">{label}</span>
-  </div>
-);
-
-const DataRow = ({ title, sub, val, isPositive, onEdit, onDelete, hideEdit }: any) => (
+const DataRow = ({ title, sub, val, isPositive, onEdit, onDelete }: any) => (
   <tr className="border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors">
-    <td className="p-5">
-      <div className="font-bold text-zinc-200 text-sm md:text-base">{title}</div>
-      <div className="text-[10px] text-zinc-600 uppercase font-black">{sub}</div>
-    </td>
+    <td className="p-5"><div className="font-bold text-zinc-200 text-sm md:text-base">{title}</div><div className="text-[10px] text-zinc-600 uppercase font-black">{sub}</div></td>
     <td className={`p-5 text-right font-black italic text-xs md:text-sm ${isPositive ? 'text-teal-400' : 'text-zinc-400'}`}>{val}</td>
     <td className="p-5 text-center space-x-4">
       <button onClick={onEdit} className="text-indigo-500 hover:text-white transition-colors"><Edit2 size={18}/></button>
@@ -386,7 +389,7 @@ const LoginPage = ({ onLogin }: any) => {
   const [p, setP] = useState('');
   return (
     <div className="min-h-screen flex items-center justify-center bg-black p-4">
-      <div className="w-full max-sm bg-zinc-900 p-8 md:p-12 rounded-[50px] border border-zinc-800 shadow-2xl">
+      <div className="w-full max-w-sm bg-zinc-900 p-8 md:p-12 rounded-[50px] border border-zinc-800 shadow-2xl">
         <h2 className="text-3xl md:text-4xl font-black text-center text-indigo-500 italic mb-10 tracking-tighter uppercase">Musicianos</h2>
         <div className="space-y-4 text-center">
           <input placeholder="USUÁRIO" className="w-full p-5 bg-zinc-800 rounded-3xl border border-zinc-700 focus:border-indigo-500 outline-none font-bold text-center text-white" onChange={e => setU(e.target.value)} />
