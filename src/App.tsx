@@ -86,7 +86,7 @@ export default function App() {
     const startDay = firstDayOfMonth(year, month);
     
     const arr = [];
-    for (let i = 0; i < startDay; i++) arr.push(null); // Espaços vazios antes do dia 1
+    for (let i = 0; i < startDay; i++) arr.push(null);
     for (let i = 1; i <= days; i++) arr.push(i);
     return arr;
   }, [currentDate]);
@@ -116,7 +116,7 @@ export default function App() {
     }
     if (type === 'userManagement') {
         const userId = modalOpen.data?.id || `u-${Date.now()}`;
-        const userData = { ...data, id: userId, categories: modalOpen.data?.categories || ['Geral'] };
+        const userData = { ...data, id: userId, categories: modalOpen.data?.categories || ['Geral'], status: data.status || 'ativo' };
         setAllUsers(prev => modalOpen.data ? prev.map(u => u.id === userId ? userData : u) : [...prev, userData]);
     }
     if (type === 'categories') {
@@ -217,7 +217,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* CALENDÁRIO DINÂMICO */}
             <div className="bg-zinc-900 p-8 rounded-[40px] border border-zinc-800 shadow-2xl h-fit">
               <div className="flex justify-between items-center mb-6">
                 <div className="flex items-center text-indigo-400">
@@ -227,8 +226,8 @@ export default function App() {
                   </h3>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() - 1)))} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronLeft size={20}/></button>
-                  <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() + 1)))} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronRight size={20}/></button>
+                  <button onClick={() => setCurrentDate(new Date(currentDate.setYear(currentDate.getFullYear()), currentDate.setMonth(currentDate.getMonth() - 1)))} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronLeft size={20}/></button>
+                  <button onClick={() => setCurrentDate(new Date(currentDate.setYear(currentDate.getFullYear()), currentDate.setMonth(currentDate.getMonth() + 1)))} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronRight size={20}/></button>
                 </div>
               </div>
               <div className="grid grid-cols-7 gap-2">
@@ -358,7 +357,8 @@ const DataRow = ({ title, sub, val, isPositive, onEdit, onDelete, hideEdit }: an
     </td>
     <td className={`p-5 text-right font-black italic text-xs md:text-sm ${isPositive ? 'text-teal-400' : 'text-zinc-400'}`}>{val}</td>
     <td className="p-5 text-center space-x-4">
-      {!hideEdit && <button onClick={onEdit} className="text-indigo-500 hover:text-white transition-colors"><Edit2 size={18}/></button>}
+      {/* AQUI ESTÁ A MUDANÇA: O BOTAO DE EDITAR ESTÁ AGORA PARA TODOS OS TIPOS */}
+      <button onClick={onEdit} className="text-indigo-500 hover:text-white transition-colors"><Edit2 size={18}/></button>
       <button onClick={onDelete} className="text-red-900 hover:text-red-500 transition-colors"><Trash2 size={18}/></button>
     </td>
   </tr>
