@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { LogOut, LayoutDashboard, Briefcase, DollarSign, Users, Trash2, PlusCircle, UserCheck, Edit2, CheckCircle2, TrendingUp, TrendingDown, X, ArrowUpCircle, ArrowDownCircle, BarChart3, Calendar as CalendarIcon, Settings } from 'lucide-react';
+import { supabase } from './supabaseClient'
+import React, { useEffect, useMemo, useState } from 'react';
+import { LogOut, LayoutDashboard, Briefcase, DollarSign, Users, Trash2, PlusCircle, UserCheck, Edit2, X, ArrowUpCircle, ArrowDownCircle, Calendar as CalendarIcon, Settings } from 'lucide-react';
 
 // --- Tipagem e Configurações ---
 type ViewState = 'dashboard' | 'crm' | 'gigs' | 'finance' | 'userManagement';
@@ -11,32 +12,36 @@ interface Gig { id: string; date: string; venue: string; fee: number; received: 
 interface Transaction { id: string; date: string; description: string; amount: number; type: 'entrada' | 'saida'; userId: string; category: string; }
 interface User { id: string; name: string; role: 'admin' | 'usuario'; loginName: string; password?: string; categories?: string[]; }
 
-const getInitialState = <T,>(key: string, defaultData: T[]): T[] => {
-  const stored = localStorage.getItem(key);
-  return stored ? JSON.parse(stored) : defaultData;
-};
-
 export default function App() {
-  const [allUsers, setAllUsers] = useState<User[]>(() => getInitialState('musicianos_users', [
+  const [allUsers, setAllUsers] = useState<User[]>([
     { id: 'admin-id', name: 'Administrador', role: 'admin', loginName: 'admin', password: 'admin123', categories: ['Gasolina', 'Marketing', 'Manutenção', 'Cordas'] },
     { id: 'joao-id', name: 'João Músico', role: 'usuario', loginName: 'joao', password: 'mypass', categories: ['Gasolina', 'Equipamento', 'Alimentação'] }
-  ]));
+  ]);
   const [user, setUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
-  const [leads, setLeads] = useState<Lead[]>(() => getInitialState('musicianos_leads', []));
-  const [gigs, setGigs] = useState<Gig[]>(() => getInitialState('musicianos_gigs', []));
-  const [finance, setFinance] = useState<Transaction[]>(() => getInitialState('musicianos_finance', []));
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [gigs, setGigs] = useState<Gig[]>([]);
+  const [finance, setFinance] = useState<Transaction[]>([]);
   const [modalOpen, setModalOpen] = useState<{ type: string | null, data: any | null }>({ type: null, data: null });
 
   const currentUserId = user?.id || '';
   const isAdmin = user?.role === 'admin';
 
+  // BUSCAR DADOS DA NUVEM (SUPABASE)
   useEffect(() => {
-    localStorage.setItem('musicianos_users', JSON.stringify(allUsers));
-    localStorage.setItem('musicianos_leads', JSON.stringify(leads));
-    localStorage.setItem('musicianos_gigs', JSON.stringify(gigs));
-    localStorage.setItem('musicianos_finance', JSON.stringify(finance));
-  }, [allUsers, leads, gigs, finance]);
+    if (user) {
+      const fetchData = async () => {
+        const { data: leadsData } = await supabase.from('leads').select('*');
+        const { data: gigsData } = await supabase.from('gigs').select('*');
+        const { data: financeData } = await supabase.from('finance').select('*');
+        
+        if (leadsData) setLeads(leadsData);
+        if (gigsData) setGigs(gigsData);
+        if (financeData) setFinance(financeData);
+      };
+      fetchData();
+    }
+  }, [user]);
 
   const fLeads = useMemo(() => leads.filter(l => l.userId === currentUserId || isAdmin), [leads, currentUserId, isAdmin]);
   const fGigs = useMemo(() => gigs.filter(g => g.userId === currentUserId || isAdmin), [gigs, currentUserId, isAdmin]);
@@ -77,19 +82,41 @@ export default function App() {
     };
   }, [fFinance]);
 
-  const salvarRegistro = (type: string, data: any) => {
-    const id = modalOpen.data?.id || `${Date.now()}`;
-    const novoItem = { ...data, id, userId: currentUserId, amount: Number(data.amount || 0), fee: Number(data.fee || 0), value: Number(data.value || 0) };
+  // SALVAR NO SUPABASE
+  const salvarRegistro = async (type: string, data: any) => {
+    const id = modalOpen.data?.id || undefined;
+    const novoItem = { 
+      ...data, 
+      user_id: currentUserId, // Nome da coluna no banco é user_id
+      amount: Number(data.amount || 0), 
+      fee: Number(data.fee || 0), 
+      value: Number(data.value || 0) 
+    };
 
-    if (type === 'crm') setLeads(prev => modalOpen.data ? prev.map(l => l.id === id ? novoItem : l) : [...prev, novoItem]);
+    if (type === 'crm') {
+      const { data: saved } = await supabase.from('leads').upsert({ ...novoItem, id }).select();
+      if (saved) setLeads(prev => id ? prev.map(l => l.id === id ? saved[0] : l) : [...prev, saved[0]]);
+    }
+    
     if (type === 'gigs') {
-      setGigs(prev => modalOpen.data ? prev.map(g => g.id === id ? novoItem : g) : [...prev, novoItem]);
-      if (data.received && !modalOpen.data) {
-        setFinance(prev => [...prev, { id: `f-${id}`, date: data.date, description: `Cachê: ${data.venue}`, amount: Number(data.fee), type: 'entrada', userId: currentUserId, category: 'Show' }]);
+      const { data: savedGig } = await supabase.from('gigs').upsert({ ...novoItem, id }).select();
+      if (savedGig) {
+        setGigs(prev => id ? prev.map(g => g.id === id ? savedGig[0] : g) : [...prev, savedGig[0]]);
+        if (data.received && !id) {
+          const trans = { date: data.date, description: `Cachê: ${data.venue}`, amount: Number(data.fee), type: 'entrada', user_id: currentUserId, category: 'Show' };
+          const { data: savedFin } = await supabase.from('finance').insert([trans]).select();
+          if (savedFin) setFinance(prev => [...prev, savedFin[0]]);
+        }
       }
     }
-    if (type === 'finance') setFinance(prev => modalOpen.data ? prev.map(t => t.id === id ? novoItem : t) : [...prev, novoItem]);
-    if (type === 'userManagement') setAllUsers(prev => [...prev, { ...data, id: `u-${id}`, role: data.role || 'usuario', categories: ['Geral'] }]);
+
+    if (type === 'finance') {
+      const { data: saved } = await supabase.from('finance').upsert({ ...novoItem, id }).select();
+      if (saved) setFinance(prev => id ? prev.map(t => t.id === id ? saved[0] : t) : [...prev, saved[0]]);
+    }
+
+    if (type === 'userManagement') setAllUsers(prev => [...prev, { ...data, id: `u-${Date.now()}`, role: data.role || 'usuario', categories: ['Geral'] }]);
+    
     if (type === 'categories') {
       const lista = data.categories.split(',').map((s: string) => s.trim()).filter((s: string) => s !== '');
       setAllUsers(prev => prev.map(u => u.id === currentUserId ? { ...u, categories: lista } : u));
@@ -98,7 +125,7 @@ export default function App() {
     setModalOpen({ type: null, data: null });
   };
 
-  if (!user) return <LoginPage onLogin={(u, p) => {
+  if (!user) return <LoginPage onLogin={(u: any, p: any) => {
     const achado = allUsers.find(x => x.loginName === u && x.password === p);
     if (achado) { setUser(achado); return true; }
     return false;
@@ -178,7 +205,7 @@ export default function App() {
                         <td className="p-5 text-right font-black italic text-teal-400">R$ {g.fee.toFixed(2)}</td>
                         <td className="p-5 text-center space-x-3">
                           <button onClick={() => setModalOpen({ type: 'gigs', data: g })} className="text-indigo-400"><Edit2 size={16}/></button>
-                          <button onClick={() => {if(confirm("Excluir?")) setGigs(gigs.filter(x=>x.id!==g.id))}} className="text-red-900"><Trash2 size={16}/></button>
+                          <button onClick={async () => {if(confirm("Excluir?")) { await supabase.from('gigs').delete().eq('id', g.id); setGigs(gigs.filter(x=>x.id!==g.id))}}} className="text-red-900"><Trash2 size={16}/></button>
                         </td>
                       </tr>
                     ))}
@@ -228,10 +255,10 @@ export default function App() {
               <table className="w-full text-left text-sm">
                 <tbody className="divide-y divide-zinc-800">
                   {currentView === 'crm' && fLeads.map(l => (
-                    <DataRow key={l.id} title={l.name} sub={l.venue} val={l.status.toUpperCase()} onEdit={() => setModalOpen({ type: 'crm', data: l })} onDelete={() => {if(confirm("Excluir?")) setLeads(leads.filter(x=>x.id!==l.id))}} />
+                    <DataRow key={l.id} title={l.name} sub={l.venue} val={l.status.toUpperCase()} onEdit={() => setModalOpen({ type: 'crm', data: l })} onDelete={async () => {if(confirm("Excluir?")) { await supabase.from('leads').delete().eq('id', l.id); setLeads(leads.filter(x=>x.id!==l.id))}}} />
                   ))}
                   {currentView === 'finance' && fFinance.map(t => (
-                    <DataRow key={t.id} title={t.description} sub={`${t.date} | ${t.category}`} val={`R$ ${t.amount.toFixed(2)}`} isPositive={t.type === 'entrada'} onDelete={() => {if(confirm("Excluir?")) setFinance(finance.filter(x=>x.id!==t.id))}} hideEdit />
+                    <DataRow key={t.id} title={t.description} sub={`${t.date} | ${t.category}`} val={`R$ ${t.amount.toFixed(2)}`} isPositive={t.type === 'entrada'} onDelete={async () => {if(confirm("Excluir?")) { await supabase.from('finance').delete().eq('id', t.id); setFinance(finance.filter(x=>x.id!==t.id))}}} hideEdit />
                   ))}
                   {currentView === 'userManagement' && allUsers.map(u => (
                     <DataRow key={u.id} title={u.name} sub={u.role.toUpperCase()} val={u.loginName} onDelete={() => {if(u.id !== user?.id && confirm("Excluir?")) setAllUsers(allUsers.filter(x=>x.id!==u.id))}} hideEdit />
