@@ -1,357 +1,406 @@
 import { supabase } from './supabaseClient'
 import React, { useEffect, useMemo, useState } from 'react';
-import { LogOut, LayoutDashboard, Briefcase, DollarSign, Users, Trash2, PlusCircle, UserCheck, Edit2, X, ArrowUpCircle, ArrowDownCircle, Calendar as CalendarIcon, Settings, Menu, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
+import { LogOut, LayoutDashboard, Briefcase, DollarSign, Users, Trash2, PlusCircle, Edit2, X, ArrowUpCircle, ArrowDownCircle, Settings, Menu, ChevronLeft, ChevronRight, BarChart3, CheckCircle2, Clock } from 'lucide-react';
 
-// --- Tipagem e Configurações ---
-type ViewState = 'dashboard' | 'crm' | 'gigs' | 'finance' | 'userManagement';
+// --- Tipagem ---
+type ViewState = 'dashboard' | 'crm' | 'gigs' | 'finance';
 const LeadStatus = { NEW: 'novo', NEGOTIATING: 'negociando', BOOKED: 'fechado', LOST: 'perdido' } as const;
-type LeadStatus = (typeof LeadStatus)[keyof typeof LeadStatus];
-
-interface Lead { id: string; name: string; venue: string; value: number; status: LeadStatus; userId: string; date: string; }
-interface Gig { id: string; date: string; venue: string; fee: number; received: boolean; userId: string; }
-interface Transaction { id: string; date: string; description: string; amount: number; type: 'entrada' | 'saida'; userId: string; category: string; }
-interface User { id: string; name: string; role: 'admin' | 'usuario'; loginName: string; password?: string; categories?: string[]; status: 'ativo' | 'suspenso' | 'bloqueado'; }
 
 export default function App() {
-  const [allUsers, setAllUsers] = useState<User[]>([
-    { id: 'admin-id', name: 'Administrador', role: 'admin', loginName: 'admin', password: 'admin123', categories: ['Gasolina', 'Marketing', 'Manutenção', 'Cordas'], status: 'ativo' },
-    { id: 'joao-id', name: 'João Músico', role: 'usuario', loginName: 'joao', password: 'mypass', categories: ['Gasolina', 'Equipamento', 'Alimentação'], status: 'ativo' }
-  ]);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [gigs, setGigs] = useState<Gig[]>([]);
-  const [finance, setFinance] = useState<Transaction[]>([]);
+  const [leads, setLeads] = useState<any[]>([]);
+  const [gigs, setGigs] = useState<any[]>([]);
+  const [finance, setFinance] = useState<any[]>([]);
   const [modalOpen, setModalOpen] = useState<{ type: string | null, data: any | null }>({ type: null, data: null });
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [loading, setLoading] = useState(true);
 
   const currentUserId = user?.id || '';
-  const isAdmin = user?.role === 'admin';
 
+  // --- Inicialização ---
   useEffect(() => {
-    if (user) {
-      const fetchData = async () => {
-        const { data: leadsData } = await supabase.from('leads').select('*');
-        const { data: gigsData } = await supabase.from('gigs').select('*');
-        const { data: financeData } = await supabase.from('finance').select('*');
-        if (leadsData) setLeads(leadsData);
-        if (gigsData) setGigs(gigsData);
-        if (financeData) setFinance(financeData);
-      };
-      fetchData();
+    const timer = setTimeout(() => setLoading(false), 4000);
+    const initApp = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        setUser(session.user);
+        await fetchProfile(session.user.id);
+        await fetchData();
+      }
+      setLoading(false);
+      clearTimeout(timer);
+    };
+    initApp();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        setUser(session.user);
+        await fetchProfile(session.user.id);
+        await fetchData();
+      } else {
+        setUser(null);
+        setProfile(null);
+      }
+    });
+    return () => authListener.subscription.unsubscribe();
+  }, []);
+
+  const fetchProfile = async (id: string) => {
+    const { data } = await supabase.from('profiles').select('*').eq('id', id).single();
+    if (data) setProfile(data);
+  };
+
+  const fetchData = async () => {
+    const { data: l } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
+    const { data: g } = await supabase.from('gigs').select('*').order('date', { ascending: true });
+    const { data: f } = await supabase.from('finance').select('*').order('date', { ascending: false });
+    if (l) setLeads(l);
+    if (g) setGigs(g);
+    if (f) setFinance(f);
+  };
+
+  // --- Lógica de Negócio ---
+  const salvarRegistro = async (type: string, data: any) => {
+    const id = modalOpen.data?.id;
+    const isReceived = data.received === 'on' || data.received === true;
+    const table = type === 'crm' ? 'leads' : type;
+
+    const payload: any = { ...data, user_id: currentUserId };
+    if (data.value) payload.value = Number(data.value);
+    if (data.fee) payload.fee = Number(data.fee);
+    if (data.amount) payload.amount = Number(data.amount);
+    if (type === 'gigs') payload.received = isReceived;
+
+    const { data: saved, error } = await supabase.from(table).upsert(id ? { ...payload, id } : payload).select();
+
+    if (error) return alert(error.message);
+
+    // Automação Show -> Financeiro
+    if (type === 'gigs' && isReceived && !id) {
+      await supabase.from('finance').insert([{
+        date: data.date,
+        description: `Show: ${data.venue}`,
+        amount: Number(data.fee),
+        type: 'entrada',
+        category: 'Show',
+        user_id: currentUserId
+      }]);
     }
-  }, [user]);
 
-  const fLeads = useMemo(() => leads.filter(l => l.userId === currentUserId || isAdmin), [leads, currentUserId, isAdmin]);
-  const fGigs = useMemo(() => gigs.filter(g => g.userId === currentUserId || isAdmin), [gigs, currentUserId, isAdmin]);
-  const fFinance = useMemo(() => finance.filter(f => f.userId === currentUserId || isAdmin), [finance, currentUserId, isAdmin]);
-  
-  const userCategories = useMemo(() => {
-    return allUsers.find(u => u.id === currentUserId)?.categories || ['Geral'];
-  }, [allUsers, currentUserId]);
+    await fetchData();
+    setModalOpen({ type: null, data: null });
+  };
 
+  const gerenciarCategoria = async (action: 'add' | 'edit' | 'delete', val: string, oldVal?: string) => {
+    let novas = profile?.categories || ['Show', 'Marketing', 'Manutenção', 'Gasolina'];
+    if (action === 'add') novas = [...novas, val];
+    if (action === 'delete') novas = novas.filter((c: string) => c !== val);
+    if (action === 'edit' && oldVal) novas = novas.map((c: string) => c === oldVal ? val : c);
+
+    const { error } = await supabase.from('profiles').update({ categories: novas }).eq('id', currentUserId);
+    if (!error) fetchProfile(currentUserId);
+  };
+
+  // --- BI Calculations ---
   const biData = useMemo(() => {
-    const rankingClientes = fFinance.filter(t => t.type === 'entrada').reduce((acc: any, curr) => {
-      const nome = curr.description.replace('Cachê: ', '').replace('Show: ', '');
+    const ent = finance.filter(t => t.type === 'entrada').reduce((s, t) => s + t.amount, 0);
+    const sai = finance.filter(t => t.type === 'saida').reduce((s, t) => s + t.amount, 0);
+    const leadsStatus = leads.reduce((acc: any, curr) => {
+      acc[curr.status] = (acc[curr.status] || 0) + 1;
+      return acc;
+    }, { novo: 0, negociando: 0, fechado: 0, perdido: 0 });
+
+    const ranking = finance.filter(t => t.type === 'entrada').reduce((acc: any, curr) => {
+      const nome = curr.description.replace('Show: ', '');
       acc[nome] = (acc[nome] || 0) + curr.amount;
       return acc;
     }, {});
-    const despesasPorCategoria = fFinance.filter(t => t.type === 'saida').reduce((acc: any, curr) => {
-      acc[curr.category] = (acc[curr.category] || 0) + curr.amount;
-      return acc;
-    }, {});
-    const entradasTotal = fFinance.filter(t => t.type === 'entrada').reduce((s,t)=>s+t.amount,0);
-    const saidasTotal = fFinance.filter(t => t.type === 'saida').reduce((s,t)=>s+t.amount,0);
 
     return { 
-      clientes: Object.entries(rankingClientes).sort((a:any, b:any) => b[1] - a[1]),
-      despesas: Object.entries(despesasPorCategoria).sort((a:any, b:any) => b[1] - a[1]),
-      saldoGeral: entradasTotal - saidasTotal,
-      entradasTotal,
-      saidasTotal
+      saldo: ent - sai, entries: ent, exits: sai, 
+      leadsStatus, 
+      ranking: Object.entries(ranking).sort((a: any, b: any) => b[1] - a[1])
     };
-  }, [fFinance]);
+  }, [finance, leads]);
 
-  const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
-  const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
-  
+  // --- Calendário ---
   const calendarDays = useMemo(() => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
-    const days = daysInMonth(year, month);
-    const startDay = firstDayOfMonth(year, month);
-    const arr: (number | null)[] = [];
-    for (let i = 0; i < startDay; i++) arr.push(null);
-    for (let i = 1; i <= days; i++) arr.push(i);
-    return arr;
+    const firstDay = new Date(year, month, 1).getDay();
+    const lastDate = new Date(year, month + 1, 0).getDate();
+    const days = [];
+    for (let i = 0; i < firstDay; i++) days.push(null);
+    for (let i = 1; i <= lastDate; i++) days.push(i);
+    return days;
   }, [currentDate]);
 
-  const salvarRegistro = async (type: string, data: any) => {
-    const id = modalOpen.data?.id || undefined;
-    const isReceived = data.received === 'on' || data.received === true;
-
-    // Objeto limpo para o banco
-    const payload: any = {
-      user_id: currentUserId,
-      date: data.date,
-    };
-
-    if (type === 'crm') {
-      payload.name = data.name;
-      payload.venue = data.venue;
-      payload.status = data.status;
-      payload.value = Number(data.value || 0);
-    } else if (type === 'gigs') {
-      payload.venue = data.venue;
-      payload.fee = Number(data.fee || 0);
-      payload.received = isReceived;
-    } else if (type === 'finance') {
-      payload.description = data.description;
-      payload.amount = Number(data.amount || 0);
-      payload.type = data.type;
-      payload.category = data.category;
-    } else if (type === 'userManagement') {
-      const userId = modalOpen.data?.id || `u-${Date.now()}`;
-      const userData = { ...data, id: userId, categories: modalOpen.data?.categories || ['Geral'], status: data.status || 'ativo' };
-      setAllUsers(prev => modalOpen.data ? prev.map(u => u.id === userId ? userData : u) : [...prev, userData]);
-      setModalOpen({ type: null, data: null });
-      return;
-    }
-
-    try {
-      const table = type === 'crm' ? 'leads' : type;
-      const { data: saved, error } = await supabase
-        .from(table)
-        .upsert(id ? { ...payload, id } : payload)
-        .select();
-
-      if (error) {
-        alert(`Erro ao salvar: ${error.message}`);
-        return;
-      }
-
-      if (saved) {
-        if (type === 'crm') setLeads(prev => id ? prev.map(l => l.id === id ? saved[0] : l) : [...prev, saved[0]]);
-        if (type === 'gigs') {
-          setGigs(prev => id ? prev.map(g => g.id === id ? saved[0] : g) : [...prev, saved[0]]);
-          
-          // LÓGICA DO CACHÊ RECEBIDO (Sincroniza com Financeiro)
-          if (isReceived && !id) {
-            const trans = { 
-              date: data.date, 
-              description: `Cachê: ${data.venue}`, 
-              amount: Number(data.fee), 
-              type: 'entrada', 
-              user_id: currentUserId, 
-              category: 'Show' 
-            };
-            const { data: savedFin } = await supabase.from('finance').insert([trans]).select();
-            if (savedFin) setFinance(prev => [...prev, savedFin[0]]);
-          }
-        }
-        if (type === 'finance') setFinance(prev => id ? prev.map(t => t.id === id ? saved[0] : t) : [...prev, saved[0]]);
-      }
-      setModalOpen({ type: null, data: null });
-    } catch (err) {
-      alert("Falha na conexão com o banco.");
-    }
-  };
-
-  if (!user) return <LoginPage onLogin={(u: any, p: any) => {
-    const achado = allUsers.find(x => x.loginName === u && x.password === p);
-    if (achado) {
-        if (achado.status === 'bloqueado') { alert("Acesso Bloqueado. Entre em contato."); return false; }
-        setUser(achado); 
-        return true; 
-    }
-    return false;
-  }} />;
+  if (loading) return <div className="h-screen bg-black flex items-center justify-center text-indigo-500 font-black italic animate-pulse">CARREGANDO MUSICIANOS...</div>;
+  if (!user) return <LoginPage />;
 
   return (
-    <div className="min-h-screen bg-black text-white flex font-sans selection:bg-indigo-500/30">
-      <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden fixed top-4 left-4 z-50 p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-indigo-400 shadow-2xl">
+    <div className="min-h-screen bg-black text-white flex font-sans">
+      {/* Sidebar - Mobile Toggle */}
+      <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="md:hidden fixed top-4 left-4 z-50 p-3 bg-zinc-900 rounded-xl text-indigo-400 border border-zinc-800">
         {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
       </button>
 
-      <aside className={`w-64 bg-zinc-900 border-r border-zinc-800 p-6 flex flex-col fixed h-full z-40 transition-transform duration-300 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:relative`}>
-        <h1 className="text-2xl font-bold text-indigo-400 mb-10 tracking-tighter italic">Musicianos</h1>
-        <nav className="flex-grow space-y-1">
+      <aside className={`w-64 bg-zinc-900 border-r border-zinc-800 p-6 flex flex-col fixed h-full z-40 transition-transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:relative`}>
+        <h1 className="text-2xl font-black text-indigo-500 mb-10 italic tracking-tighter">Musicianos</h1>
+        <nav className="flex-grow space-y-2">
           <MenuBtn active={currentView === 'dashboard'} onClick={() => { setCurrentView('dashboard'); setIsSidebarOpen(false); }} icon={<LayoutDashboard size={20}/>} label="Dashboard" />
-          <MenuBtn active={currentView === 'gigs'} onClick={() => { setCurrentView('gigs'); setIsSidebarOpen(false); }} icon={<Briefcase size={20}/>} label="Shows / Agenda" />
-          <MenuBtn active={currentView === 'crm'} onClick={() => { setCurrentView('crm'); setIsSidebarOpen(false); }} icon={<Users size={20}/>} label="CRM / Leads" />
+          <MenuBtn active={currentView === 'gigs'} onClick={() => { setCurrentView('gigs'); setIsSidebarOpen(false); }} icon={<Briefcase size={20}/>} label="Agenda" />
+          <MenuBtn active={currentView === 'crm'} onClick={() => { setCurrentView('crm'); setIsSidebarOpen(false); }} icon={<Users size={20}/>} label="Leads" />
           <MenuBtn active={currentView === 'finance'} onClick={() => { setCurrentView('finance'); setIsSidebarOpen(false); }} icon={<DollarSign size={20}/>} label="Financeiro" />
-          {isAdmin && <MenuBtn active={currentView === 'userManagement'} onClick={() => { setCurrentView('userManagement'); setIsSidebarOpen(false); }} icon={<UserCheck size={20}/>} label="Painel Admin" />}
         </nav>
-        <div className="mt-auto pt-6 border-t border-zinc-800 text-sm">
-          <p className="text-zinc-500 uppercase text-[10px] font-black">Músico Logado</p>
-          <p className="font-bold text-indigo-300 truncate">{user.name}</p>
-          <button onClick={() => setUser(null)} className="flex items-center mt-4 text-red-400 hover:text-red-300 transition-colors"><LogOut size={16} className="mr-2"/> Sair</button>
+        <div className="pt-6 border-t border-zinc-800">
+          <p className="text-xs font-black text-zinc-500 uppercase mb-2">Usuário</p>
+          <p className="font-bold text-indigo-300 truncate text-sm">{profile?.name || user.email}</p>
+          <button onClick={() => supabase.auth.signOut()} className="flex items-center mt-4 text-red-500 text-xs font-black uppercase"><LogOut size={14} className="mr-2"/> Sair</button>
         </div>
       </aside>
 
-      {isSidebarOpen && <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 md:hidden" onClick={() => setIsSidebarOpen(false)} />}
-
-      <main className="flex-1 p-6 md:p-8 overflow-y-auto">
+      <main className="flex-1 p-6 md:p-10 overflow-y-auto">
         {currentView === 'dashboard' && (
-          <div className="space-y-8 animate-in fade-in duration-500 mt-10 md:mt-0">
-            <header className="flex justify-between items-end border-b border-indigo-500/30 pb-4">
-              <h2 className="text-3xl md:text-4xl font-black italic uppercase tracking-tighter">Dashboard BI</h2>
+          <div className="space-y-8 animate-in fade-in duration-500">
+            <header className="flex justify-between items-end border-b border-indigo-500/20 pb-6">
+              <div>
+                <h2 className="text-4xl font-black uppercase italic tracking-tighter">BI Engine</h2>
+                <p className="text-zinc-500 text-xs font-bold uppercase mt-1">Visão Geral do seu Negócio</p>
+              </div>
               <div className="text-right">
-                <p className="text-[10px] text-zinc-500 font-black uppercase">Saldo Total</p>
-                <p className={`text-2xl md:text-3xl font-black ${biData.saldoGeral >= 0 ? 'text-teal-400' : 'text-red-500'}`}>R$ {biData.saldoGeral.toLocaleString('pt-BR')}</p>
+                <p className="text-zinc-500 text-[10px] font-black uppercase">Saldo Geral</p>
+                <p className={`text-3xl font-black italic ${biData.saldo >= 0 ? 'text-teal-400' : 'text-red-500'}`}>R$ {biData.saldo.toLocaleString('pt-BR')}</p>
               </div>
             </header>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <InteractiveCard title="Entradas Totais" value={biData.entradasTotal} icon={<ArrowUpCircle className="text-teal-400" size={24}/>} color="border-teal-500" onClick={() => setModalOpen({type: 'detail_in', data: null})} />
-              <InteractiveCard title="Saídas Totais" value={biData.saidasTotal} icon={<ArrowDownCircle className="text-red-400" size={24}/>} color="border-red-500" onClick={() => setModalOpen({type: 'detail_out', data: null})} />
-              <div className="p-8 bg-zinc-900 rounded-[32px] border-l-8 border-indigo-500 shadow-2xl">
-                <p className="text-zinc-500 text-[10px] font-black uppercase mb-4">Despesas por Categoria</p>
-                <div className="space-y-2 max-h-32 overflow-y-auto pr-2">
-                  {biData.despesas.map(([cat, val]: any) => (
-                    <div key={cat} className="flex justify-between text-xs border-b border-zinc-800 pb-1">
-                      <span className="text-zinc-400 uppercase font-bold">{cat}</span>
-                      <span className="font-black text-red-400">R$ {val}</span>
-                    </div>
-                  ))}
-                </div>
+              <InteractiveCard title="Entradas" value={biData.entries} icon={<ArrowUpCircle className="text-teal-400"/>} color="border-teal-500" />
+              <InteractiveCard title="Saídas" value={biData.exits} icon={<ArrowDownCircle className="text-red-400"/>} color="border-red-500" />
+              <div className="bg-zinc-900 p-6 rounded-[32px] border-l-8 border-indigo-500 shadow-2xl">
+                 <p className="text-zinc-500 text-[10px] font-black uppercase mb-4 flex items-center gap-2"><BarChart3 size={14}/> Funil de Leads</p>
+                 <div className="flex items-end justify-between h-24 gap-1">
+                    {Object.entries(biData.leadsStatus).map(([status, count]: any) => (
+                      <div key={status} className="flex-1 flex flex-col items-center">
+                        <div className="w-full bg-indigo-500/20 rounded-t-lg relative flex items-end h-16">
+                          <div className="w-full bg-indigo-500 rounded-t-lg transition-all" style={{ height: `${count > 0 ? (count / leads.length) * 100 : 5}%` }}></div>
+                        </div>
+                        <span className="text-[8px] font-black uppercase mt-2 text-zinc-600">{status}</span>
+                      </div>
+                    ))}
+                 </div>
               </div>
             </div>
           </div>
         )}
 
         {currentView === 'gigs' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in slide-in-from-bottom-2 duration-300 mt-10 md:mt-0">
-            <div className="space-y-6">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-indigo-500/30 pb-4 gap-4">
-                <h2 className="text-3xl font-black uppercase italic">Meus Shows</h2>
-                <button onClick={() => setModalOpen({ type: 'gigs', data: null })} className="bg-indigo-600 w-full md:w-auto px-6 py-3 rounded-2xl flex items-center justify-center hover:bg-indigo-700 transition-all font-bold">
-                  <PlusCircle size={20} className="mr-2"/> Novo Show
-                </button>
-              </div>
-              <div className="bg-zinc-900/50 rounded-3xl border border-zinc-800 overflow-x-auto shadow-2xl">
-                <table className="w-full text-left text-sm min-w-[400px]">
-                  <tbody className="divide-y divide-zinc-800">
-                    {fGigs.map(g => (
-                      <tr key={g.id} className="border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors">
-                        <td className="p-5"><div>{g.venue}</div><div className="text-[10px] text-zinc-600 uppercase font-black">{g.date}</div></td>
-                        <td className="p-5 text-right font-black italic text-teal-400">R$ {g.fee.toFixed(2)}</td>
-                        <td className="p-5 text-center space-x-3">
-                          <button onClick={() => setModalOpen({ type: 'gigs', data: g })} className="text-indigo-400"><Edit2 size={16}/></button>
-                          <button onClick={async () => {if(confirm("Excluir?")) { await supabase.from('gigs').delete().eq('id', g.id); setGigs(gigs.filter(x=>x.id!==g.id))}}} className="text-red-900"><Trash2 size={16}/></button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+          <div className="space-y-8 animate-in slide-in-from-bottom-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-3xl font-black uppercase italic">Agenda de Shows</h2>
+              <button onClick={() => setModalOpen({ type: 'gigs', data: null })} className="bg-indigo-600 px-6 py-3 rounded-2xl flex items-center font-black uppercase text-xs hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-500/20">
+                <PlusCircle size={18} className="mr-2"/> Novo Show
+              </button>
             </div>
-            <div className="bg-zinc-900 p-8 rounded-[40px] border border-zinc-800 shadow-2xl h-fit">
+
+            {/* Calendário */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 shadow-2xl">
               <div className="flex justify-between items-center mb-6">
-                <div className="flex items-center text-indigo-400">
-                  <CalendarIcon className="mr-3" size={24} />
-                  <h3 className="text-xl font-black italic uppercase">{currentDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}</h3>
-                </div>
+                <h3 className="font-black italic uppercase text-indigo-400">{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</h3>
                 <div className="flex gap-2">
-                  <button onClick={() => { const d = new Date(currentDate); d.setMonth(d.getMonth() - 1); setCurrentDate(d); }} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronLeft size={20}/></button>
-                  <button onClick={() => { const d = new Date(currentDate); d.setMonth(d.getMonth() + 1); setCurrentDate(d); }} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronRight size={20}/></button>
+                  <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() - 1)))} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronLeft/></button>
+                  <button onClick={() => setCurrentDate(new Date(currentDate.setMonth(currentDate.getMonth() + 1)))} className="p-2 hover:bg-zinc-800 rounded-lg"><ChevronRight/></button>
                 </div>
               </div>
               <div className="grid grid-cols-7 gap-2">
-                {['D','S','T','Q','Q','S','S'].map(d => <div key={d} className="text-center text-[10px] font-black text-zinc-600 pb-2">{d}</div>)}
+                {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => <div key={d} className="text-center text-[10px] font-black text-zinc-600 uppercase mb-2">{d}</div>)}
                 {calendarDays.map((day, i) => {
-                  if (!day) return <div key={`empty-${i}`} className="h-8 md:h-10"></div>;
-                  const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                  const temShow = fGigs.some(g => g.date === dateStr);
+                  const dayStr = day ? `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}` : null;
+                  const hasGig = dayStr && gigs.some(g => g.date === dayStr);
                   return (
-                    <div key={i} className={`h-8 md:h-10 flex items-center justify-center rounded-xl text-xs font-bold transition-all ${temShow ? 'bg-indigo-600 text-white shadow-lg scale-110' : 'bg-zinc-800 text-zinc-500'}`}>{day}</div>
+                    <div key={i} className={`h-12 md:h-20 border border-zinc-800/50 rounded-xl flex flex-col items-center justify-center relative ${day ? 'bg-zinc-800/30' : 'opacity-0'}`}>
+                      <span className="text-xs font-bold text-zinc-500">{day}</span>
+                      {hasGig && <div className="w-2 h-2 bg-indigo-500 rounded-full mt-1 animate-pulse"></div>}
+                    </div>
                   );
                 })}
               </div>
             </div>
-          </div>
-        )}
 
-        {(currentView === 'finance' || currentView === 'crm' || currentView === 'userManagement') && (
-          <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-300 mt-10 md:mt-0">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-indigo-500/30 pb-4 gap-4">
-              <h2 className="text-3xl font-black uppercase italic">{currentView === 'crm' ? 'CRM' : currentView === 'finance' ? 'Financeiro' : 'Painel Admin'}</h2>
-              <button onClick={() => setModalOpen({ type: currentView, data: null })} className="bg-indigo-600 w-full md:w-auto px-6 py-3 rounded-2xl flex items-center justify-center hover:bg-indigo-700 transition-all font-bold"><PlusCircle size={20} className="mr-2"/> Novo</button>
-            </div>
-            <div className="bg-zinc-900/50 rounded-3xl border border-zinc-800 overflow-x-auto shadow-2xl">
-              <table className="w-full text-left text-sm min-w-[450px]">
+            {/* Tabela de Gigs */}
+            <div className="bg-zinc-900/50 border border-zinc-800 rounded-[32px] overflow-hidden">
+              <table className="w-full text-left">
+                <thead className="bg-zinc-800/50 text-[10px] font-black uppercase text-zinc-500">
+                  <tr>
+                    <th className="p-5">Local / Data</th>
+                    <th className="p-5">Cachê</th>
+                    <th className="p-5 text-center">Status</th>
+                    <th className="p-5 text-right">Ações</th>
+                  </tr>
+                </thead>
                 <tbody className="divide-y divide-zinc-800">
-                  {currentView === 'crm' && fLeads.map(l => (
-                    <DataRow key={l.id} title={l.name} sub={l.venue} val={l.status.toUpperCase()} onEdit={() => setModalOpen({ type: 'crm', data: l })} onDelete={async () => {if(confirm("Excluir?")) { await supabase.from('leads').delete().eq('id', l.id); setLeads(leads.filter(x=>x.id!==l.id))}}} />
-                  ))}
-                  {currentView === 'finance' && fFinance.map(t => (
-                    <DataRow key={t.id} title={t.description} sub={`${t.date} | ${t.category}`} val={`R$ ${t.amount.toFixed(2)}`} isPositive={t.type === 'entrada'} onDelete={async () => {if(confirm("Excluir?")) { await supabase.from('finance').delete().eq('id', t.id); setFinance(finance.filter(x=>x.id!==t.id))}}} hideEdit />
-                  ))}
-                  {currentView === 'userManagement' && allUsers.map(u => (
-                    <DataRow key={u.id} title={u.name} sub={`${u.role.toUpperCase()} | ${u.status.toUpperCase()}`} val={u.loginName} onEdit={() => setModalOpen({type: 'userManagement', data: u})} onDelete={() => {if(u.id !== user?.id && confirm("Excluir?")) setAllUsers(allUsers.filter(x=>x.id!==u.id))}} />
+                  {gigs.map(g => (
+                    <tr key={g.id} className="hover:bg-zinc-800/30 transition-colors">
+                      <td className="p-5">
+                        <div className="font-bold text-sm">{g.venue}</div>
+                        <div className="text-[10px] font-black text-indigo-500 uppercase">{new Date(g.date).toLocaleDateString('pt-BR')}</div>
+                      </td>
+                      <td className="p-5 font-black italic text-teal-400 text-sm">R$ {Number(g.fee).toLocaleString('pt-BR')}</td>
+                      <td className="p-5 text-center">
+                        {g.received ? <CheckCircle2 className="text-teal-500 mx-auto" size={20}/> : <Clock className="text-zinc-600 mx-auto" size={20}/>}
+                      </td>
+                      <td className="p-5 text-right space-x-3">
+                        <button onClick={() => setModalOpen({type: 'gigs', data: g})} className="text-indigo-400 hover:text-white"><Edit2 size={16}/></button>
+                        <button onClick={async () => { if(confirm("Excluir?")) { await supabase.from('gigs').delete().eq('id', g.id); fetchData(); } }} className="text-red-900 hover:text-red-500"><Trash2 size={16}/></button>
+                      </td>
+                    </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           </div>
         )}
+
+        {currentView === 'finance' && (
+          <div className="space-y-8">
+            <div className="flex justify-between items-center border-b border-indigo-500/20 pb-6">
+              <h2 className="text-3xl font-black uppercase italic">Fluxo de Caixa</h2>
+              <div className="flex gap-3">
+                <button onClick={() => setModalOpen({type: 'config_finance', data: null})} className="p-3 bg-zinc-900 border border-zinc-800 rounded-2xl text-zinc-500 hover:text-indigo-400 transition-all"><Settings size={20}/></button>
+                <button onClick={() => setModalOpen({ type: 'finance', data: null })} className="bg-indigo-600 px-6 py-3 rounded-2xl flex items-center font-black uppercase text-xs shadow-lg shadow-indigo-500/20">
+                  <PlusCircle size={18} className="mr-2"/> Novo Lançamento
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-zinc-900/50 border border-zinc-800 rounded-[32px] overflow-hidden">
+              <table className="w-full text-left">
+                <tbody className="divide-y divide-zinc-800">
+                  {finance.map(t => (
+                    <tr key={t.id} className="hover:bg-zinc-800/30 transition-colors">
+                      <td className="p-5">
+                        <div className="font-bold text-sm uppercase">{t.description}</div>
+                        <div className="text-[10px] font-black text-zinc-600 uppercase italic">{t.date} | {t.category}</div>
+                      </td>
+                      <td className={`p-5 text-right font-black italic text-sm ${t.type === 'entrada' ? 'text-teal-400' : 'text-red-500'}`}>
+                        {t.type === 'entrada' ? '+' : '-'} R$ {Number(t.amount).toLocaleString('pt-BR')}
+                      </td>
+                      <td className="p-5 text-right">
+                        <button onClick={async () => { if(confirm("Excluir?")) { await supabase.from('finance').delete().eq('id', t.id); fetchData(); } }} className="text-red-900 hover:text-red-500 transition-all"><Trash2 size={18}/></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Views de CRM simplificada no código completo */}
+        {currentView === 'crm' && (
+           <div className="space-y-6">
+              <div className="flex justify-between items-center">
+                <h2 className="text-3xl font-black uppercase italic">CRM Leads</h2>
+                <button onClick={() => setModalOpen({ type: 'crm', data: null })} className="bg-indigo-600 px-6 py-3 rounded-2xl flex items-center font-black uppercase text-xs shadow-lg shadow-indigo-500/20">
+                  <PlusCircle size={18} className="mr-2"/> Novo Lead
+                </button>
+              </div>
+              <div className="bg-zinc-900/50 border border-zinc-800 rounded-[32px] overflow-hidden">
+                <table className="w-full text-left">
+                  <tbody className="divide-y divide-zinc-800">
+                    {leads.map(l => (
+                      <tr key={l.id} className="hover:bg-zinc-800/30 transition-colors">
+                        <td className="p-5"><div className="font-bold text-sm uppercase">{l.name}</div><div className="text-[10px] font-black text-zinc-600 uppercase">{l.venue}</div></td>
+                        <td className="p-5 font-black text-xs italic text-indigo-400 text-right uppercase tracking-widest">{l.status}</td>
+                        <td className="p-5 text-right">
+                           <button onClick={() => setModalOpen({type: 'crm', data: l})} className="text-indigo-400 mr-4"><Edit2 size={16}/></button>
+                           <button onClick={async () => { if(confirm("Excluir?")) { await supabase.from('leads').delete().eq('id', l.id); fetchData(); } }} className="text-red-900"><Trash2 size={16}/></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+           </div>
+        )}
       </main>
 
+      {/* MODAL SYSTEM - TOTALMENTE INTEGRADO */}
       {modalOpen.type && (
-        <div className="fixed inset-0 bg-black/95 flex items-center justify-center p-4 z-50 backdrop-blur-md">
-          <div className={`bg-zinc-900 border border-zinc-800 p-6 md:p-8 rounded-[40px] w-full shadow-2xl relative overflow-y-auto max-h-[90vh] ${modalOpen.type.startsWith('detail_') ? 'max-w-2xl' : 'max-w-md'}`}>
-            <button onClick={() => setModalOpen({type: null, data: null})} className="absolute top-6 right-6 text-zinc-500 hover:text-white"><X size={24}/></button>
-            <h3 className="text-xl md:text-2xl font-black mb-8 text-indigo-400 uppercase italic">{modalOpen.data ? 'Editar' : 'Novo'} {modalOpen.type}</h3>
-            <form onSubmit={async (e) => { e.preventDefault(); await salvarRegistro(modalOpen.type!, Object.fromEntries(new FormData(e.currentTarget))); }} className="space-y-4">
-                {modalOpen.type === 'crm' && (
-                  <>
-                    <input name="name" defaultValue={modalOpen.data?.name} placeholder="Nome do Lead" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <input name="venue" defaultValue={modalOpen.data?.venue} placeholder="Local Provável" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" />
-                    <input name="date" type="date" defaultValue={modalOpen.data?.date || new Date().toISOString().split('T')[0]} className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <select name="status" defaultValue={modalOpen.data?.status || 'novo'} className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white outline-none">
-                      {Object.values(LeadStatus).map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
-                    </select>
-                  </>
-                )}
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50 backdrop-blur-xl">
+          <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-[40px] w-full max-w-md shadow-2xl relative overflow-y-auto max-h-[90vh]">
+            <button onClick={() => setModalOpen({type: null, data: null})} className="absolute top-8 right-8 text-zinc-500 hover:text-white"><X size={24}/></button>
+            <h3 className="text-xl font-black mb-8 text-indigo-400 uppercase italic tracking-tighter">{modalOpen.type.replace('_', ' ')}</h3>
+            
+            {modalOpen.type === 'config_finance' ? (
+              <div className="space-y-6">
+                <div className="flex flex-wrap gap-2">
+                  {(profile?.categories || ['Show', 'Manutenção', 'Marketing', 'Gasolina']).map((cat: string) => (
+                    <div key={cat} className="px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-full flex items-center gap-3 group">
+                      <span className="text-[10px] font-black uppercase text-zinc-300">{cat}</span>
+                      <button onClick={() => gerenciarCategoria('delete', cat)} className="text-red-900 group-hover:text-red-500"><X size={12}/></button>
+                    </div>
+                  ))}
+                </div>
+                <form onSubmit={(e: any) => { e.preventDefault(); gerenciarCategoria('add', e.target.newCat.value); e.target.reset(); }} className="flex gap-2">
+                  <input name="newCat" placeholder="Nova Categoria..." className="flex-1 p-4 bg-zinc-800 rounded-2xl outline-none font-bold text-xs uppercase" required />
+                  <button className="bg-indigo-600 p-4 rounded-2xl"><PlusCircle/></button>
+                </form>
+              </div>
+            ) : (
+              <form onSubmit={async (e: any) => { 
+                e.preventDefault(); 
+                const fd = new FormData(e.currentTarget);
+                const data = Object.fromEntries(fd);
+                data.received = fd.get('received') === 'on';
+                await salvarRegistro(modalOpen.type!, data); 
+              }} className="space-y-4">
+                
                 {modalOpen.type === 'gigs' && (
                   <>
-                    <input name="venue" defaultValue={modalOpen.data?.venue} placeholder="Casa de Show" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <input name="date" type="date" defaultValue={modalOpen.data?.date || new Date().toISOString().split('T')[0]} className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <input name="fee" type="number" defaultValue={modalOpen.data?.fee} placeholder="Cachê R$" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <label className="flex items-center space-x-3 p-4 bg-zinc-800 rounded-2xl cursor-pointer">
-                      <input name="received" type="checkbox" defaultChecked={modalOpen.data?.received} className="w-6 h-6 accent-indigo-600" />
-                      <span className="text-[10px] md:text-sm font-bold uppercase italic">Cachê Recebido? (Lança em Finanças)</span>
+                    <input name="venue" defaultValue={modalOpen.data?.venue} placeholder="LOCAL DO SHOW" className="w-full p-5 bg-zinc-800 rounded-3xl text-white outline-none font-bold text-xs" required />
+                    <input name="date" type="date" defaultValue={modalOpen.data?.date || new Date().toISOString().split('T')[0]} className="w-full p-5 bg-zinc-800 rounded-3xl text-white outline-none font-bold text-xs" required />
+                    <input name="fee" type="number" defaultValue={modalOpen.data?.fee} placeholder="VALOR CACHÊ (R$)" className="w-full p-5 bg-zinc-800 rounded-3xl text-white outline-none font-bold text-xs text-teal-400" required />
+                    <label className="flex items-center gap-4 p-5 bg-zinc-800 rounded-3xl cursor-pointer">
+                      <input name="received" type="checkbox" defaultChecked={modalOpen.data?.received} className="w-6 h-6 accent-indigo-500" />
+                      <span className="text-xs font-black uppercase text-zinc-400">Marcar como Recebido?</span>
                     </label>
                   </>
                 )}
+
                 {modalOpen.type === 'finance' && (
                   <>
-                    <input name="description" defaultValue={modalOpen.data?.description} placeholder="Descrição" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <input name="amount" type="number" defaultValue={modalOpen.data?.amount} placeholder="Valor R$" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <select name="category" className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white outline-none">
-                      {userCategories.map(cat => <option key={cat} value={cat}>{cat.toUpperCase()}</option>)}
+                    <input name="description" defaultValue={modalOpen.data?.description} placeholder="DESCRIÇÃO" className="w-full p-5 bg-zinc-800 rounded-3xl text-white outline-none font-bold text-xs uppercase" required />
+                    <input name="amount" type="number" defaultValue={modalOpen.data?.amount} placeholder="VALOR (R$)" className="w-full p-5 bg-zinc-800 rounded-3xl text-white outline-none font-bold text-xs" required />
+                    <input name="date" type="date" defaultValue={modalOpen.data?.date || new Date().toISOString().split('T')[0]} className="w-full p-5 bg-zinc-800 rounded-3xl text-white outline-none font-bold text-xs" required />
+                    <select name="type" className="w-full p-5 bg-zinc-800 rounded-3xl font-black text-xs uppercase outline-none">
+                      <option value="saida">SAÍDA / DESPESA</option>
+                      <option value="entrada">ENTRADA / CACHÊ</option>
                     </select>
-                    <select name="type" defaultValue={modalOpen.data?.type || 'entrada'} className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white outline-none">
-                      <option value="entrada">ENTRADA (+)</option>
-                      <option value="saida">SAÍDA (-)</option>
+                    <select name="category" className="w-full p-5 bg-zinc-800 rounded-3xl font-black text-xs uppercase outline-none">
+                      {(profile?.categories || ['Show', 'Manutenção', 'Marketing', 'Gasolina']).map((cat: string) => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
                     </select>
-                    <input name="date" type="date" defaultValue={modalOpen.data?.date || new Date().toISOString().split('T')[0]} className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
                   </>
                 )}
-                {modalOpen.type === 'userManagement' && (
+
+                {modalOpen.type === 'crm' && (
                   <>
-                    <input name="name" defaultValue={modalOpen.data?.name} placeholder="Nome do Músico" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <input name="loginName" defaultValue={modalOpen.data?.loginName} placeholder="Usuário" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <input name="password" type="text" defaultValue={modalOpen.data?.password} placeholder="Senha" className="w-full p-4 bg-zinc-800 rounded-2xl text-white outline-none" required />
-                    <select name="status" defaultValue={modalOpen.data?.status || 'ativo'} className="w-full p-4 bg-zinc-800 rounded-2xl uppercase font-black text-xs text-white outline-none">
-                        <option value="ativo">ATIVO ✅</option>
-                        <option value="suspenso">SUSPENSO ⚠️</option>
-                        <option value="bloqueado">BLOQUEADO 🚫</option>
+                    <input name="name" defaultValue={modalOpen.data?.name} placeholder="NOME DO CONTRATANTE" className="w-full p-5 bg-zinc-800 rounded-3xl text-white outline-none font-bold text-xs uppercase" required />
+                    <input name="venue" defaultValue={modalOpen.data?.venue} placeholder="LOCAL" className="w-full p-5 bg-zinc-800 rounded-3xl text-white outline-none font-bold text-xs uppercase" />
+                    <select name="status" defaultValue={modalOpen.data?.status || 'novo'} className="w-full p-5 bg-zinc-800 rounded-3xl font-black text-xs uppercase outline-none">
+                      {Object.values(LeadStatus).map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </>
                 )}
-                <button type="submit" className="w-full p-5 bg-indigo-600 rounded-[30px] font-black uppercase tracking-widest hover:scale-105 transition-all text-white">Salvar Registro</button>
-            </form>
+
+                <button type="submit" className="w-full p-6 bg-indigo-600 rounded-[32px] font-black uppercase tracking-widest text-sm shadow-xl hover:scale-105 transition-all mt-4">Confirmar Lançamento</button>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -359,43 +408,42 @@ export default function App() {
   );
 }
 
-// Subcomponentes iguais...
+// --- Componentes Auxiliares ---
 const MenuBtn = ({ active, onClick, icon, label }: any) => (
-  <button onClick={onClick} className={`flex items-center w-full p-4 rounded-2xl transition-all ${active ? 'bg-indigo-600 text-white shadow-xl italic font-black' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white font-bold'}`}>
-    {icon} <span className="ml-4 text-sm">{label}</span>
+  <button onClick={onClick} className={`flex items-center w-full p-4 rounded-2xl transition-all ${active ? 'bg-indigo-600 text-white shadow-xl italic font-black scale-105' : 'text-zinc-500 hover:bg-zinc-800 hover:text-white font-bold'}`}>
+    {icon} <span className="ml-4 text-[10px] uppercase tracking-widest">{label}</span>
   </button>
 );
 
-const InteractiveCard = ({ title, value, icon, color, onClick }: any) => (
-  <button onClick={onClick} className={`text-left p-6 md:p-8 bg-zinc-900 rounded-[32px] border-l-8 ${color} shadow-2xl hover:scale-[1.02] transition-all group relative overflow-hidden`}>
+const InteractiveCard = ({ title, value, icon, color }: any) => (
+  <div className={`w-full p-6 bg-zinc-900 rounded-[32px] border-l-8 ${color} shadow-2xl`}>
     <div className="flex justify-between mb-4"><span className="text-zinc-500 text-[10px] font-black uppercase tracking-widest">{title}</span>{icon}</div>
-    <p className="text-xl md:text-3xl font-black italic text-white">R$ {value.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
-  </button>
+    <p className="text-2xl font-black italic">R$ {value.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</p>
+  </div>
 );
 
-const DataRow = ({ title, sub, val, isPositive, onEdit, onDelete }: any) => (
-  <tr className="border-b border-zinc-800 hover:bg-zinc-800/30 transition-colors">
-    <td className="p-5"><div className="font-bold text-zinc-200 text-sm md:text-base">{title}</div><div className="text-[10px] text-zinc-600 uppercase font-black">{sub}</div></td>
-    <td className={`p-5 text-right font-black italic text-xs md:text-sm ${isPositive ? 'text-teal-400' : 'text-zinc-400'}`}>{val}</td>
-    <td className="p-5 text-center space-x-4">
-      <button onClick={onEdit} className="text-indigo-500 hover:text-white transition-colors"><Edit2 size={18}/></button>
-      <button onClick={onDelete} className="text-red-900 hover:text-red-500 transition-colors"><Trash2 size={18}/></button>
-    </td>
-  </tr>
-);
-
-const LoginPage = ({ onLogin }: any) => {
-  const [u, setU] = useState('');
-  const [p, setP] = useState('');
+const LoginPage = () => {
+  const [loading, setLoading] = useState(false);
   return (
     <div className="min-h-screen flex items-center justify-center bg-black p-4">
-      <div className="w-full max-w-sm bg-zinc-900 p-8 md:p-12 rounded-[50px] border border-zinc-800 shadow-2xl">
-        <h2 className="text-3xl md:text-4xl font-black text-center text-indigo-500 italic mb-10 tracking-tighter uppercase">Musicianos</h2>
-        <div className="space-y-4 text-center">
-          <input placeholder="USUÁRIO" className="w-full p-5 bg-zinc-800 rounded-3xl border border-zinc-700 focus:border-indigo-500 outline-none font-bold text-center text-white" onChange={e => setU(e.target.value)} />
-          <input type="password" placeholder="SENHA" className="w-full p-5 bg-zinc-800 rounded-3xl border border-zinc-700 focus:border-indigo-500 outline-none font-bold text-center text-white" onChange={e => setP(e.target.value)} />
-          <button onClick={() => onLogin(u, p)} className="w-full p-5 bg-indigo-600 rounded-3xl font-black text-white shadow-xl shadow-indigo-600/30 hover:scale-105 transition-all uppercase mt-4">Entrar</button>
-        </div>
+      <div className="w-full max-w-sm bg-zinc-900 p-10 rounded-[50px] border border-zinc-800 shadow-2xl text-center">
+        <h2 className="text-4xl font-black text-indigo-500 italic mb-10 tracking-tighter uppercase">Musicianos</h2>
+        <form className="space-y-4" onSubmit={async (e: any) => {
+          e.preventDefault();
+          setLoading(true);
+          const { error } = await supabase.auth.signInWithPassword({
+            email: e.target.email.value,
+            password: e.target.password.value,
+          });
+          if (error) alert("Erro: " + error.message);
+          setLoading(false);
+        }}>
+          <input name="email" type="email" placeholder="E-MAIL" className="w-full p-5 bg-zinc-800 rounded-3xl border border-zinc-700 outline-none font-bold text-center text-white text-xs" required />
+          <input name="password" type="password" placeholder="SENHA" className="w-full p-5 bg-zinc-800 rounded-3xl border border-zinc-700 outline-none font-bold text-center text-white text-xs" required />
+          <button disabled={loading} className="w-full p-5 bg-indigo-600 rounded-3xl font-black text-white shadow-xl hover:scale-105 transition-all uppercase mt-4">
+            {loading ? 'Entrando...' : 'Entrar'}
+          </button>
+        </form>
       </div>
     </div>
   );
